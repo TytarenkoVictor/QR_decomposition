@@ -1,0 +1,426 @@
+---
+title: "code"
+author: "Viktor"
+date: "04 05 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+edded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(pracma)
+library(corpcor)
+library(purrr)
+library(plotly)
+library(dplyr)
+library(tidyr)
+library(Matrix)
+library(rafalib)
+library(readxl)
+library(moments)
+library(tseries)
+data1 <- read_excel("FundData.xls", sheet = 1)
+data2 <- read_excel("FundData.xls", sheet = 2)
+data3 <- read_excel("FundData.xls", sheet = 3)
+
+
+x1 = as.Date(as.character(data1$caldt), "%Y%m%d")
+x2 = as.Date(as.character(data2$caldt), "%Y%m%d")
+x3 = as.Date(as.character(data3$caldt), "%Y%m%d")
+
+```
+
+
+
+
+
+
+#PSGAX
+This chart shows how historically returns change of PSGAX.  return per share had high volatility in the late 90s/early 2000s, the biggest among 3 stocks. There was a significant decrease in the late 1990s/early 2000s, and in 2008, however less than in the late 90s/early 2000s. During a crisis or recession return per share decreases. This stock is less volatile than VFIAX.
+```{r}
+plot.default(x2, y=data2$mret, type="l", main= "Historical returns of PSGAX",
+     ylab="Return", xlab="Time") 
+
+
+```
+
+
+
+
+
+
+
+
+#Descriptive statistics of historical returns for PSGAX
+```{r}
+ret2 <- as.double(data2$mret[3:271])
+print("Mean")
+mean(ret2)
+print("Standard Deviation")
+sd(ret2)
+print("Skewness")
+skewness(ret2)
+print("Kurtosis")
+kurtosis(ret2)
+print("Sharpe Ratio")
+sharpe(ret2)
+```
+
+
+
+
+
+#VFIAX
+```{r}
+ff <- read.csv("F-F_Research_Data_Factors.CSV")
+exretMkt <- ff$Mkt.RF[854:1122]/100
+SMB <- ff$SMB[854:1122]/100
+HML <- ff$HML[854:1122]/100
+f <- ff$RF[854:1122]/100
+exmretfund <- as.double(data2$mret[3:271]) - f
+df <- data.frame(exmretfund, exretMkt, SMB, HML)
+
+
+
+
+library(pracma)
+library(corpcor)
+library(purrr)
+library(plotly)
+library(dplyr)
+library(tidyr)
+library(Matrix)
+library(rafalib)
+
+
+
+qrgivens <- function(A, y){
+  m = nrow(A)
+  n = ncol(A)
+  Q = eye(m)
+  R = A
+  for (j in 1:n){
+    for (i in seq(m, j + 1)){
+      G = eye(m)
+      res = givensrotation(R[i-1,j], R[i,j])
+      c = res[1]
+      s = res[2]
+      mm = matrix(c(c, -s, s, c), nrow=2, ncol=2, byrow = TRUE)
+      G[c(i-1, i),c(i-1, i)] = mm
+      R = t(G) %*% R
+      Q = Q %*% G
+    }
+  }
+  Qty <- as.numeric(crossprod(Q, y))
+  ## solving upper triangular system
+  b <- backsolve(R, Qty)
+  ## residuals
+  e <- as.numeric(y - A %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+givensrotation <- function(a,b) {
+  if (b == 0){
+    c = 1
+    s = 0
+  }else {
+    if (abs(b) > abs(a)){
+      r = a/b
+      s = 1 / sqrt(1 + r*r);
+      c = s*r;
+    } else{
+      r = b/a
+      c = 1 / sqrt(1 + r*r);
+      s = c*r;
+    }
+  }
+  return(c(c, s))
+}
+
+
+
+
+HouseholderRefl <- function(A, y) {
+  n <- ncol(A)
+  m <- nrow(A)
+  H <- list() #to store the H_k matrices
+  R <- as.matrix(A) 
+  
+  if (m > n) {
+    l <- n
+  } 
+  else {
+    l <- m
+  }
+  for (k in 1:l) {
+    x <- R[k:m, k]
+    e <- as.matrix(c(1, rep(0, length(x)-1)))
+    v_k <- sign(x[1]) * sqrt(sum(x^2)) * e + x
+    
+    H_k <- diag(length(x)) - 2 * as.vector(v_k %*% t(v_k)) / (t(v_k) %*% v_k)
+    if (k > 1) {
+      H_k <- bdiag(diag(k-1), H_k)
+    }
+    H[[k]] <- H_k
+    R <- H_k %*% R
+  }
+  
+  Q <- Reduce("%*%", H) 
+  R <- as.matrix(R) 
+  
+  Qty <- as.numeric(crossprod(Q, y))
+  ## solving upper triangular system
+  b <- backsolve(R, Qty)
+  ## residuals
+  e <- as.numeric(y - A %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+
+gramschmidt <- function(x, y) {
+  #x <- as.matrix(x)
+  # Get the number of rows and columns of the matrix
+  n <- ncol(x)
+  m <- nrow(x)
+  
+  # Initialize the Q and R matrices
+  q <- matrix(0, m, n)
+  r <- matrix(0, n, n)
+  
+  for (j in 1:n) {
+    v = x[,j] # Step 1 of the Gram-Schmidt process v1 = a1
+    # Skip the first column
+    if (j > 1) {
+      for (i in 1:(j-1)) {
+        r[i,j] <- t(q[,i]) %*% x[,j] # Find the inner product (noted to be q^T a earlier)
+        # Subtract the projection from v which causes v to become perpendicular to all columns of Q
+        v <- v - r[i,j] * q[,i] 
+      }      
+    }
+    # Find the L2 norm of the jth diagonal of R
+    r[j,j] <- sqrt(sum(v^2))
+    # The orthogonalized result is found and stored in the ith column of Q.
+    q[,j] <- v / r[j,j]
+  }
+  
+  Qty <- as.numeric(crossprod(q, y))
+  ## solving upper triangular system
+  b <- backsolve(r, Qty)
+  ## residuals
+  e <- as.numeric(y - x %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+
+
+
+r <- data.frame(df$exretMkt, df$SMB, df$HML)
+d <- data.matrix(r)
+
+gramschmidt(d, df$exmretfund)
+qrgivens(d, df$exmretfund)
+HouseholderRefl(d, df$exmretfund)
+
+
+
+summary(ols <- lm(exmretfund ~ exretMkt + SMB + HML, data = df))
+```
+
+
+
+
+#PSGAX
+```{r}
+exretMkt <- ff$Mkt.RF[854:1122]/100
+SMB <- ff$SMB[854:1122]/100
+HML <- ff$HML[854:1122]/100
+f <- ff$RF[854:1122]/100
+exmretfund <- as.double(data2$mret[3:271]) - f
+df <- data.frame(exmretfund, exretMkt, SMB, HML)
+
+
+qrgivens <- function(A, y){
+  m = nrow(A)
+  n = ncol(A)
+  Q = eye(m)
+  R = A
+  for (j in 1:n){
+    for (i in seq(m, j + 1)){
+      G = eye(m)
+      res = givensrotation(R[i-1,j], R[i,j])
+      c = res[1]
+      s = res[2]
+      mm = matrix(c(c, -s, s, c), nrow=2, ncol=2, byrow = TRUE)
+      G[c(i-1, i),c(i-1, i)] = mm
+      R = t(G) %*% R
+      Q = Q %*% G
+    }
+  }
+  Qty <- as.numeric(crossprod(Q, y))
+  ## solving upper triangular system
+  b <- backsolve(R, Qty)
+  ## residuals
+  e <- as.numeric(y - A %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+givensrotation <- function(a,b) {
+  if (b == 0){
+    c = 1
+    s = 0
+  }else {
+    if (abs(b) > abs(a)){
+      r = a/b
+      s = 1 / sqrt(1 + r*r);
+      c = s*r;
+    } else{
+      r = b/a
+      c = 1 / sqrt(1 + r*r);
+      s = c*r;
+    }
+  }
+  return(c(c, s))
+}
+
+
+
+
+HouseholderRefl <- function(A, y) {
+  n <- ncol(A)
+  m <- nrow(A)
+  H <- list() #to store the H_k matrices
+  R <- as.matrix(A) 
+  
+  if (m > n) {
+    l <- n
+  } 
+  else {
+    l <- m
+  }
+  for (k in 1:l) {
+    x <- R[k:m, k]
+    e <- as.matrix(c(1, rep(0, length(x)-1)))
+    v_k <- sign(x[1]) * sqrt(sum(x^2)) * e + x
+    
+    H_k <- diag(length(x)) - 2 * as.vector(v_k %*% t(v_k)) / (t(v_k) %*% v_k)
+    if (k > 1) {
+      H_k <- bdiag(diag(k-1), H_k)
+    }
+    H[[k]] <- H_k
+    R <- H_k %*% R
+  }
+  
+  Q <- Reduce("%*%", H) 
+  R <- as.matrix(R) 
+  
+  Qty <- as.numeric(crossprod(Q, y))
+  ## solving upper triangular system
+  b <- backsolve(R, Qty)
+  ## residuals
+  e <- as.numeric(y - A %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+
+gramschmidt <- function(x, y) {
+  #x <- as.matrix(x)
+  # Get the number of rows and columns of the matrix
+  n <- ncol(x)
+  m <- nrow(x)
+  
+  # Initialize the Q and R matrices
+  q <- matrix(0, m, n)
+  r <- matrix(0, n, n)
+  
+  for (j in 1:n) {
+    v = x[,j] # Step 1 of the Gram-Schmidt process v1 = a1
+    # Skip the first column
+    if (j > 1) {
+      for (i in 1:(j-1)) {
+        r[i,j] <- t(q[,i]) %*% x[,j] # Find the inner product (noted to be q^T a earlier)
+        # Subtract the projection from v which causes v to become perpendicular to all columns of Q
+        v <- v - r[i,j] * q[,i] 
+      }      
+    }
+    # Find the L2 norm of the jth diagonal of R
+    r[j,j] <- sqrt(sum(v^2))
+    # The orthogonalized result is found and stored in the ith column of Q.
+    q[,j] <- v / r[j,j]
+  }
+  
+  Qty <- as.numeric(crossprod(q, y))
+  ## solving upper triangular system
+  b <- backsolve(r, Qty)
+  ## residuals
+  e <- as.numeric(y - x %*% b)
+  ## R-squared
+  RSS <- crossprod(e)[1]
+  TSS <- crossprod(y - mean(y))[1]
+  R2 <- 1 - RSS / TSS
+  ## multiple return
+  list(coefficients = b, R2 = R2)
+}
+
+
+
+
+
+
+
+r <- data.frame(df$exretMkt, df$SMB, df$HML)
+d <- data.matrix(r)
+
+gramschmidt(d, df$exmretfund)
+qrgivens(d, df$exmretfund)
+HouseholderRefl(d, df$exmretfund)
+
+
+
+summary(ols <- lm(exmretfund ~ exretMkt + SMB + HML, data = df))
+```
+
+
